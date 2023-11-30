@@ -7,10 +7,9 @@ from selenium.common import TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.wait import WebDriverWait
-
 from websites.support.support_classes import *
-from websites.support.support_functions import scrap_support_units
-
+from websites.support.support_functions import scrap_support_categories
+import pandas as pd
 options = webdriver.ChromeOptions()
 options.add_experimental_option("detach", True)
 
@@ -35,46 +34,38 @@ soup = BeautifulSoup(html_source, 'html.parser')
 support_categories = [sc.get_text(strip=True) for sc in soup.find_all('div', class_=SUPPORT_BUTTON_CLASS)]
 
 # Iterate over each support category to retrieve all data related to it
+categories = scrap_support_categories(driver, support_categories)
 
-categories = []
-for sc in support_categories:
-    # In order to handle errors, the process will be retried a maximum of 3 times
-    for attempt in range(MAX_RETRIES):
-        try:
-            category = Category(sc)
-            support_button = WebDriverWait(driver, SHORT_TIMEOUT).until(
-                EC.element_to_be_clickable((By.XPATH, f"//div[text()='{sc}']")))
-            support_button.click()
-            # Wait for loading icon to disappear before continuing
-            try:
-                WebDriverWait(driver, LONG_TIMEOUT).until_not(
-                    EC.presence_of_element_located((By.CLASS_NAME, LOADING_ICON_CLASS)))
+# Create a dataframe to store the data
+df = pd.DataFrame(columns=['Category', 'Unit', 'Subunit', 'Description'])
 
-            except TimeoutException:
-                print(f"Loading icon was not detected. Continuing...")
-                pass
+# Store the categories, units, subunits and descriptions in the dataframe
+for category in categories:
+    for unit in category.units:
+        for subunit in unit.subunits:
+            df = df._append({'Category': category.name, 'Unit': unit.name, 'Subunit': subunit.name,
+                            'Description': subunit.description}, ignore_index=True)
 
-            # Now we are inside the corresponding support category, so let's scrap the units, subunits and descriptions
-            units = scrap_support_units(driver)
-            # And finally we add the list of units to the category and append it to the list of categories
-            category.add_units(units)
-            categories.append(category)
+# Now it's time to add the hash key and the mod hash key to the dataframe
+df['primary_hash_key'] = ''
+df['mod_hash_key'] = ''
 
-            # Wait for return button to be clickable in order to return to the main page
-            return_button = WebDriverWait(driver, SHORT_TIMEOUT).until(
-                EC.element_to_be_clickable((By.CLASS_NAME, RETURN_BUTTON_CLASS)))
-            return_button.click()
-            print(f"Attempt {attempt + 1} succeeded for \"{sc}\" category.")
-            break
-        except TimeoutException as e:
-            print(f"Attempt {attempt + 1} timed out. Retrying...")
-        except Exception as e:
-            print(f"Attempt {attempt + 1} failed for \"{sc}\" category: {e}. Retrying...")
-    else:
-        # This block is executed if the inner loop completes without a 'break'
-        print(f"Task failed after {MAX_RETRIES} attempts. Skipping to the next category.")
-        driver.get(URL)
-        continue
+# Iterate over each row of the dataframe to add the SHA-256 hash keys
+for index, row in df.iterrows():
+    # Get the SHA-256 hash key for the primary key
+    primary_string = row['Category'] + row['Unit'] + row['Subunit']
+    mod_string = row['Description']
+
+    primary_hash_key = get_sha256_hash_key(row['Category'], row['Unit'], row['Subunit'])
+    # Get the SHA-256 hash key for the mod key
+    mod_hash_key = get_sha256_hash_key(row['Category'], row['Unit'], row['Subunit'], row['Description'])
+    # Add the hash keys to the dataframe
+    df.loc[index, 'primary_hash_key'] = primary_hash_key
+    df.loc[index, 'mod_hash_key'] = mod_hash_key
+
+
+# Save the dataframe to a csv file
+df.to_csv('support_scrapped_data.csv', index=False)
 
 # Close the browser window
 driver.quit()
