@@ -3,9 +3,9 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.wait import WebDriverWait
 from selenium.common import TimeoutException
-from support_elements import *
-from support_classes import *
-import re
+from resources.variables import *
+from resources.model_classes import *
+
 
 def scrap_support_categories(driver, support_categories):
     categories = []
@@ -45,7 +45,7 @@ def scrap_support_categories(driver, support_categories):
         else:
             # This block is executed if the inner loop completes without a 'break'
             print(f"Task failed after {MAX_RETRIES} attempts. Skipping to the next category.")
-            driver.get(URL)
+            driver.get(SUPPORT_URL)
             continue
 
     return categories
@@ -82,7 +82,7 @@ def scrap_support_units(driver):
         else:
             # This block is executed if the inner loop completes without a 'break'
             print(f"Task failed after {MAX_RETRIES} attempts. Skipping to the next category.")
-            driver.get(URL)
+            driver.get(SUPPORT_URL)
             continue
     # Wait for return button to be clickable in order to return to the main page
     return_button = WebDriverWait(driver, SHORT_TIMEOUT).until(

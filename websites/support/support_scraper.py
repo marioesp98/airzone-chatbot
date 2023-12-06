@@ -1,13 +1,10 @@
-import time
-from time import sleep
-from support_elements import *
+from resources.variables import *
 from selenium import webdriver
 from bs4 import BeautifulSoup
 from selenium.common import TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.wait import WebDriverWait
-from websites.support.support_classes import *
 from websites.support.support_functions import scrap_support_categories
 import pandas as pd
 options = webdriver.ChromeOptions()
@@ -16,7 +13,7 @@ options.add_experimental_option("detach", True)
 driver = webdriver.Chrome(options=options)
 driver.maximize_window()
 
-driver.get(URL)
+driver.get(SUPPORT_URL)
 
 try:
     WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.CLASS_NAME, SUPPORT_BUTTON_CLASS)))
@@ -65,7 +62,7 @@ for index, row in df.iterrows():
 
 
 # Save the dataframe to a csv file
-df.to_csv('support_scrapped_data.csv', index=False)
+df.to_csv('results/support_scrapped_data.csv', index=False)
 
 # Close the browser window
 driver.quit()
