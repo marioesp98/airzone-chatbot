@@ -1,62 +1,123 @@
 import os
+import re
+import time
+
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup, NavigableString
 
-api_key = os.environ.get('AIRZONE_API_KEY')
+from resources.general_functions import calculate_hash, insert_df_into_db
 
-headers = {
-    'Accept': 'application/json',
-    'Content-Type': 'application/json',
-    'apikey': api_key,
-    'app-locale': 'es',
-    'app-market': 'ib'
-}
-session = requests.Session()
-session.headers.update(headers)
 
-support_endpoint = 'https://api.airzonecloud.com/mscrm.pv1/crm-associates/categories'
-response = session.get(support_endpoint)
+def general_information_scraper(session):
+    translations_endpoint = 'https://api.airzonecloud.com/msairpress.pv1/translations/es-ES'
+    response = session.get(translations_endpoint)
 
-categories = []
-response_json = response.json()
-courses = response_json['body']['courses']
+    general_information_list = []
+    general_information_dict_list = []
+    # First, get 'About Airzone' information
+    about_airzone = response.json()['body']['about']
+    # Check if there is any element starting with 'paragraph'
+    about_airzone_description = ''
+    if about_airzone:
+        for key, value in about_airzone.items():
+            if key.startswith('paragraph'):
+                about_airzone_description += value
 
-# If the categories are found in the response, extract the 'name' values for each list element in 'digital_sections'
-course_list = []
-if courses:
-    for course in courses:
-        course_id = course['uuid']
-        course_title = course['title']
-        course_category = (course['category']['course_category_iso']).lower()
-        course_profile = (course['profile']['course_profile_iso']).lower()
-        course_mode = (course['mode']['course_mode_iso']).lower()
-        course_raw_description = course['description']
+        clean_about_airzone_description = re.sub(r'\s+', ' ', about_airzone_description)
 
-        # In order to clean the description, we will use BeautifulSoup
-        soup = BeautifulSoup(course_raw_description, 'html.parser')
-        for p_tag in soup.find_all('p'):
-            if p_tag.find('strong'):
-                p_tag.decompose()
-                break
+        # Create a tuple with response.json['body']['altImage'] and the description
+        about_airzone_tuple = (about_airzone['altImage'], clean_about_airzone_description)
+        general_information_list.append(about_airzone_tuple)
 
-        # Clean the final description removing double whitespaces and whitespaces before a dot
-        course_clean_description = soup.text.replace(" .", ".").replace("   ", " ").replace("  ",
-                                                                                            " ").replace(
-            "\n", " ").strip()
+    # Next, get contact information about Airzone
+    market_endpoint = 'https://api.airzonecloud.com/msmarket.pv1/markets/market'
+    response = session.get(market_endpoint)
 
-        # Save the data into a dictionary (id, profile, mode, title, description)
-        course_dict = {'id': course_id, 'category': course_category, 'profile': course_profile, 'mode': course_mode, 'title': course_title,
-                       'description': course_clean_description}
-        course_list.append(course_dict)
+    contact_information = response.json()['body']['market']
 
-    # Create a dataframe to store the data in the course list
-    df = pd.DataFrame(columns=['ID', 'Category', 'Profile', 'Mode', 'Title', 'Description'])
+    commercial_contact = ('Contacto comercial', contact_information['commercial_contact'])
+    general_information_list.append(commercial_contact)
+    bank_name = ('Banco', contact_information['bank_name'])
+    general_information_list.append(bank_name)
+    bank_account = ('Cuenta bancaria', contact_information['bank_account'])
+    general_information_list.append(bank_account)
+    address = ('Dirección', contact_information['altra_company']['address'])
+    general_information_list.append(address)
+    cif = ('CIF', contact_information['altra_company']['cif'])
+    general_information_list.append(cif)
+    city = ('Ciudad', contact_information['altra_company']['city'])
+    general_information_list.append(city)
+    company_name = ('Compañía', contact_information['altra_company']['name'])
+    general_information_list.append(company_name)
+    phone = ('Teléfono', contact_information['altra_company']['phone'])
+    general_information_list.append(phone)
+    postal_code = ('Código postal', contact_information['altra_company']['postal_code'])
+    general_information_list.append(postal_code)
+    web_url = ('WEB', contact_information['altra_company']['web'])
+    general_information_list.append(web_url)
+
+    # Add 'Contact Information' at the beginning of each tuple
+    general_information_list = [('Contacto', item[0], item[1]) for item in general_information_list]
+
+    # Next, get the footer sections from MyZone website
+    endpoints = (('Política de privacidad', 'https://myzone.airzone.es/politica-privacidad'),
+                 ('Condiciones de uso', 'https://myzone.airzone.es/condiciones-uso'),
+                 ('Aviso legal', 'https://myzone.airzone.es/aviso-legal'),
+                 ('Política de cookies', 'https://myzone.airzone.es/politica-cookies'))
+
+    for endpoint in endpoints:
+        response = session.get(endpoint[1])
+        soup = BeautifulSoup(response.text, 'html.parser')
+        sections = soup.select('div.col-md-10 > div.row')
+        for section in sections:
+            description = ''
+            section_name = None
+            for tag in section.contents:
+                if tag.name == 'h5':
+                    section_name = tag.text.strip().capitalize()
+                elif tag.name == 'p':
+                    description += tag.text.strip() + " "
+                elif tag.name == 'ul' or tag.name == 'ol':
+                    list_number = 1
+                    for li in tag.contents:
+                        if li.name == 'li':
+                            description += str(list_number) + ") " + li.text.strip() + " "
+                            list_number += 1
+
+            if section_name is not None:
+                clean_description = re.sub(r'\s+', ' ', description).strip()
+                general_information_list.append((endpoint[0], section_name, clean_description))
+
+    for item in general_information_list:
+        # Include primary_hash_id and mod_hash_id
+        primary_hash_id_data = f"{item[0]}{item[1]}"
+        primary_hash_id = calculate_hash(primary_hash_id_data)
+
+        mod_hash_id_data = item[2]
+        mod_hash_id = calculate_hash(mod_hash_id_data)
+
+        item_dict = {'primary_hash_id': primary_hash_id, 'mod_hash_id': mod_hash_id,
+                     'uploaded_date': time.strftime('%Y-%m-%d %H:%M:%S'), 'support_source': 'General Information',
+                     'category': 'General Information',
+                     'unit': item[0], 'subunit': item[1],
+                     'type': '', 'description': item[2]}
+
+        general_information_dict_list.append(item_dict)
+
+    # Create a dataframe to store the data in the general information list
+    df = pd.DataFrame(
+        columns=['primary_hash_id', 'mod_hash_id', 'uploaded_date', 'support_source', 'category', 'unit', 'subunit',
+                 'type', 'description'])
 
     # Store the categories, units, subunits and descriptions in the dataframe
-    for course in course_list:
-        df = df._append({'ID': course['id'], 'Category': course['category'], 'Profile': course['profile'], 'Mode': course['mode'],
-                         'Title': course['title'], 'Description': course['description']}, ignore_index=True)
+    for item in general_information_dict_list:
+        df = df._append(item, ignore_index=True)
+    pass
+    query = "INSERT INTO support (primary_hash_id, mod_hash_id, uploaded_date, support_source, category, unit, " \
+            "subunit, type, description) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
 
-    # Save the dataframe to a csv file
-    df.to_csv('results/airzone_academia_courses.csv', mode='a', index=False)
+    insert_df_into_db(df, query, 'support')
+
+
+

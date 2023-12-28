@@ -1,29 +1,37 @@
-# Function to calculate SHA256 hash for the concatenation of the first three columns
 import hashlib
 import os
 import mysql.connector
 
 
+# Function to calculate SHA256 hash for the concatenation of the columns of interest
 def calculate_hash(concatenated_string):
-    sha256_hash = hashlib.sha256(concatenated_string.encode()).hexdigest()
+    sha256_hash = hashlib.sha256(concatenated_string.encode('utf-8')).hexdigest()
     return sha256_hash
 
 
+# Function to insert a dataframe into a given table in the database. It will only insert the rows that are not
+# already in the database
 def insert_df_into_db(df, query, table_name):
-    mysql_user = os.environ.get('MYSQL_USER')
-    mysql_password = os.environ.get('MYSQL_PASSWORD')
-    mysql_database = os.environ.get('MYSQL_DATABASE')
+    db_host = os.environ.get('DB_HOST')
+    db_port = os.environ.get('DB_PORT')
+    db_database = os.environ.get('DB_DATABASE')
+    db_user = os.environ.get('DB_USER')
+    db_password = os.environ.get('DB_PASSWORD')
 
     # Create a MySQL connection
     connection = mysql.connector.connect(
-        host="localhost",
-        user=mysql_user,
-        password=mysql_password,
-        database=mysql_database
+        host=db_host,
+        port=db_port,
+        user=db_user,
+        password=db_password,
+        database=db_database
     )
     # For each row in the dataframe,
     # Create a cursor
     cursor = connection.cursor()
+
+    # Remove duplicate values from the dataframe by column 'primary_hash_id'
+    df.drop_duplicates(subset='primary_hash_id', keep='first', inplace=True)
 
     # Fetch existing hash_ids from the database
     cursor.execute(f"SELECT primary_hash_id FROM {table_name}")
