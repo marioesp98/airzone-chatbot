@@ -52,10 +52,10 @@ def airzone_main_scraper():
         logging.info("Starting the Airzone scraper...")
         # Run all the scrapers
         academia_scraper(session, db_connection)
-        # general_information_scraper(session, db_connection)
-        # partner_scraper(session, db_connection)
-        # support_scraper(session, db_connection)
-        # asyncio.run(airzone_products_scraper(db_connection))
+        general_information_scraper(session, db_connection)
+        partner_scraper(session, db_connection)
+        support_scraper(session, db_connection)
+        asyncio.run(airzone_products_scraper(db_connection))
 
     except mysql.connector.Error as e:
         print(f"Failed to connect to database: {e}")
