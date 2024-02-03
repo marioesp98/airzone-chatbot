@@ -6,6 +6,7 @@ from src.main_scraper import airzone_main_scraper
 def lambda_handler(event, context):
     try:
         # Run the main scraper
+        print(event['message'])
         airzone_main_scraper()
         return {
             'statusCode': 200,

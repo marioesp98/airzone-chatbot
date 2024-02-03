@@ -22,9 +22,6 @@ def academia_scraper(session, db_connection):
         if courses:
             for course in courses:
                 course_title = course['title']
-                course_category = (course['category']['course_category_iso']).lower()
-                course_profile = (course['profile']['course_profile_iso']).lower()
-                course_mode = (course['mode']['course_mode_iso']).lower()
                 course_raw_description = course['description']
 
                 # In order to clean the description, we will use BeautifulSoup
@@ -41,16 +38,13 @@ def academia_scraper(session, db_connection):
                     "\n", " ").strip()
 
                 # Include primary_hash_id and mod_hash_id
-                primary_hash_id_data = f"{course_category}{course_profile}{course_mode}{course_title}"
-                primary_hash_id = calculate_hash(primary_hash_id_data)
-
-                mod_hash_id_data = course_clean_description
-                mod_hash_id = calculate_hash(mod_hash_id_data)
+                hash_id_data = f"{course_title}{course_clean_description}"
+                hash_id = calculate_hash(hash_id_data)
 
                 # Save the data into a dictionary (id, profile, mode, title, description)
-                course_dict = {'primary_hash_id': primary_hash_id, 'mod_hash_id': mod_hash_id,
+                course_dict = {'hash_id': hash_id,
                                'uploaded_date': time.strftime('%Y-%m-%d %H:%M:%S'),
-                               'category': course_category, 'profile': course_profile, 'mode': course_mode,
+                               'source': 'Academia',
                                'title': course_title,
                                'description': course_clean_description}
                 course_list.append(course_dict)
@@ -58,11 +52,9 @@ def academia_scraper(session, db_connection):
             logging.info("Inserting the 'Academia' scraped data into a dataframe...")
             df = pd.DataFrame(course_list)
 
-            query = "INSERT INTO academia (primary_hash_id, mod_hash_id, uploaded_date, category, profile, mode, " \
-                    "title, description) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
-
             logging.info("Inserting the 'Academia' data into the database...")
-            insert_df_into_db(db_connection, df, query, 'academia')
+            collection = db_connection['academia']
+            insert_df_into_db(collection, df)
 
     except requests.exceptions.Timeout as e:
         logging.error(f"Request timed out: {str(e)}")
@@ -81,11 +73,9 @@ def partner_scraper(session, db_connection):
         partner_list = []
         response_json = response.json()
         partner_categories = response_json['body']['categories']['data']
-
         for category in partner_categories:
             category_name = category['name']
             for partner in category['associates']:
-                company_type = partner['crm_company_type']['name']
                 name = partner['name']
                 alias = partner['alias']
                 address = partner['address']
@@ -95,16 +85,13 @@ def partner_scraper(session, db_connection):
                 email = partner['email']
 
                 # Include primary_hash_id and mod_hash_id
-                primary_hash_id_data = f"{category_name}{name}{company_type}{address}{city}{postal_code}"
-                primary_hash_id = calculate_hash(primary_hash_id_data)
+                hash_id_data = f"{category_name}{name}{address}{city}{postal_code}{phone}{email}{alias}"
+                hash_id = calculate_hash(hash_id_data)
 
-                mod_hash_id_data = f"{phone}{email}{alias}"
-                mod_hash_id = calculate_hash(mod_hash_id_data)
-                partner_dict = {'primary_hash_id': primary_hash_id,
-                                'mod_hash_id': mod_hash_id,
+                partner_dict = {'hash_id': hash_id,
                                 'uploaded_date': time.strftime('%Y-%m-%d %H:%M:%S'),
+                                'source': 'Partner',
                                 'category': category_name,
-                                'company_type': company_type,
                                 'name': name, 'alias': alias, 'address': address,
                                 'city': city, 'postal_code': postal_code, 'phone': phone, 'email': email}
 
@@ -115,12 +102,10 @@ def partner_scraper(session, db_connection):
         # Store the data from the partner_list the dataframe
         df = pd.DataFrame(partner_list)
 
-        query = "INSERT INTO partner (primary_hash_id, mod_hash_id, uploaded_date, category, company_type, name, " \
-                "alias, address, city, postal_code, phone, email) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, " \
-                "%s, %s)"
-
         logging.info("Inserting the 'Partner' data into the database...")
-        insert_df_into_db(db_connection, df, query, 'partner')
+
+        collection = db_connection['partner']
+        insert_df_into_db(collection, df)
 
     except requests.exceptions.Timeout as e:
         logging.error(f"Request timed out: {str(e)}")

@@ -5,7 +5,8 @@ import requests
 import warnings
 from bs4 import BeautifulSoup, NavigableString
 from requests import Session
-from src.utils.general_functions import calculate_hash, insert_df_into_db
+from src.utils.general_functions import calculate_hash, insert_df_into_db, extract_text_from_pdf, \
+    find_missing_documents_in_db
 from bs4 import MarkupResemblesLocatorWarning
 
 # Disable the warning
@@ -14,18 +15,16 @@ warnings.simplefilter("ignore", MarkupResemblesLocatorWarning)
 
 def airzone_support_scraper(session: Session) -> pd.DataFrame:
     support_endpoint = 'https://api.airzonecloud.com/msmultimedia.pv1/digital-doc/books'
-    support_item_list = []
+    support_document_list = []
     categories = []
     target_iso = 'MU_AZCLOUD'
 
-    logging.info("Starting the 'Airzone Support' website scraper...")
-
     # Create a dataframe to store the data
     df = pd.DataFrame(
-        columns=['primary_hash_id', 'mod_hash_id', 'uploaded_date', 'support_source', 'category', 'unit', 'subunit',
-                 'type', 'description'])
+        columns=['hash_id', 'uploaded_date', 'source', 'title', 'description'])
 
     try:
+        logging.info("Starting the 'Airzone Support' website scraper...")
         response = session.get(support_endpoint)
         response_json = response.json()
 
@@ -33,8 +32,8 @@ def airzone_support_scraper(session: Session) -> pd.DataFrame:
 
         category_list = next((item for item in digital_books_data if item.get('az_iso') == target_iso), None)
 
-        # If the categories are found in the response, extract the 'name' values for each list element in
-        # 'digital_sections'
+        # If the categories are found in the response, the 'name' values for each list element in
+        # 'digital_sections' are extracted
         if category_list and 'digital_sections' in category_list:
             for category in category_list['digital_sections']:
                 # Add the category name and az_iso into a dictionary
@@ -48,14 +47,13 @@ def airzone_support_scraper(session: Session) -> pd.DataFrame:
                 units = response_json['body']['digital_section']['digital_subsections']
 
                 for unit in units:
-                    unit_name = unit['name']
                     for subunit in unit['digital_contents']:
-                        subunit_name = subunit['name']
-                        subunit_raw_description = subunit['description']
+                        title = subunit['name']
+                        raw_description = subunit['description']
 
                         # In order to clean the description, we will use BeautifulSoup
-                        soup = BeautifulSoup(subunit_raw_description, 'html.parser')
-                        final_description = ""
+                        soup = BeautifulSoup(raw_description, 'html.parser')
+                        clean_description = ""
                         excluded_tags = ['a']
                         for tag in soup.contents:
                             if tag.name in excluded_tags:
@@ -65,48 +63,46 @@ def airzone_support_scraper(session: Session) -> pd.DataFrame:
                             elif tag.text == '':
                                 tag.decompose()
                             elif isinstance(tag, NavigableString):
-                                final_description += tag.strip()
+                                clean_description += tag.strip()
                             else:
                                 list_number = 1
                                 # Iterate over the children of the tag to add to a predefined string only tags with
                                 # readable text
                                 for content in tag.contents:
                                     if tag.name in ('h2', 'h3', 'h4'):
-                                        final_description += content.text.strip() + ": "
+                                        clean_description += content.text.strip() + ": "
                                     elif content.name == 'li':
-                                        final_description += str(list_number) + ") " + content.text.strip() + " "
+                                        clean_description += str(list_number) + ") " + content.text.strip() + " "
                                         list_number += 1
                                     elif content.name in ('a', 'em'):
-                                        final_description += "\"" + content.text.strip() + "\"" + " "
+                                        clean_description += "\"" + content.text.strip() + "\"" + " "
                                     else:
-                                        final_description += content.text.strip() + " "
+                                        clean_description += content.text.strip() + " "
 
                         # Clean the final description removing double whitespaces and whitespaces before a dot
-                        clean_final_description = final_description.replace(" .", ".").replace("   ", " ").replace("  ",
+                        clean_final_description = clean_description.replace(" .", ".").replace("   ", " ").replace("  ",
                                                                                                                    " ").replace(
                             "\n", " ").strip()
 
-                        # Include primary_hash_id and mod_hash_id
-                        primary_hash_id_data = f"{category['name']}{unit_name}{subunit_name}"
-                        primary_hash_id = calculate_hash(primary_hash_id_data)
-
-                        mod_hash_id_data = clean_final_description
-                        mod_hash_id = calculate_hash(mod_hash_id_data)
+                        # Calculate the hash_id based on the title and the description
+                        hash_id_data = f"{title}{clean_description}"
+                        hash_id = calculate_hash(hash_id_data)
 
                         # Save the data into a dictionary (category name, unit name, subunit name and description)
-                        support_item = {'primary_hash_id': primary_hash_id, 'mod_hash_id': mod_hash_id,
-                                        'uploaded_date': time.strftime('%Y-%m-%d %H:%M:%S'),
-                                        'support_source': 'Airzone Support',
-                                        'category': category['name'], 'unit': unit_name,
-                                        'subunit': subunit_name,
-                                        'type': '',
-                                        'description': clean_final_description}
+                        support_document = {'hash_id': hash_id,
+                                            'uploaded_date': time.strftime('%Y-%m-%d %H:%M:%S'),
+                                            'source': 'Airzone Support',
+                                            'title': title,
+                                            'description': clean_final_description}
 
-                        support_item_list.append(support_item)
+                        support_document_list.append(support_document)
 
             logging.info("Inserting the 'Airzone Support' scraped data into a dataframe...")
-            # Store the categories, units, subunits and descriptions in the dataframe
-            df = pd.DataFrame(support_item_list)
+
+            # Store the documents into the dataframe
+            df = pd.DataFrame(support_document_list)
+
+            return df
 
     except requests.exceptions.Timeout as e:
         logging.error(f"Request timed out: {str(e)}")
@@ -114,8 +110,6 @@ def airzone_support_scraper(session: Session) -> pd.DataFrame:
         logging.error(f"HTTP error occurred: {str(e)}")
     except Exception as e:
         logging.error(f"An error occurred in the airzone_support_scraper function: {str(e)}")
-
-    return df
 
 
 def airzone_faq_scraper(session: Session) -> pd.DataFrame:
@@ -125,8 +119,7 @@ def airzone_faq_scraper(session: Session) -> pd.DataFrame:
     faq_list = []
     # Create a dataframe to store the data
     df = pd.DataFrame(
-        columns=['primary_hash_id', 'mod_hash_id', 'uploaded_date', 'support_source', 'category', 'unit', 'subunit',
-                 'type', 'description'])
+        columns=['hash_id', 'uploaded_date', 'source', 'title', 'description'])
     try:
         response = session.get(faq_groups_endpoint)
         response_json = response.json()
@@ -180,21 +173,14 @@ def airzone_faq_scraper(session: Session) -> pd.DataFrame:
                     clean_final_answer = final_answer.replace(" .", ".").replace("   ", " ").replace("  ", " ").replace(
                         "\n", " ").replace("( ", "(").strip()
 
-                    # Include primary_hash_id and mod_hash_id
-                    primary_hash_id_data = f"{group['name']}{faq_question}"
-                    primary_hash_id = calculate_hash(primary_hash_id_data)
+                    hash_id_data = f"{faq_question}{clean_final_answer}"
+                    hash_id = calculate_hash(hash_id_data)
 
-                    mod_hash_id_data = clean_final_answer
-                    mod_hash_id = calculate_hash(mod_hash_id_data)
-
-                    # Save the data into a dictionary (primary_hash_id, mod_hash_id, uploaded_date, category name,
-                    # unit name, subunit name and description)
-                    faq_item = {'primary_hash_id': primary_hash_id, 'mod_hash_id': mod_hash_id,
+                    # Save the data into a dictionary (hash_id, uploaded_date, title and description)
+                    faq_item = {'hash_id': hash_id,
                                 'uploaded_date': time.strftime('%Y-%m-%d %H:%M:%S'),
-                                'support_source': 'Airzone FAQs',
-                                'category': group['name'], 'unit': 'FAQ',
-                                'subunit': faq_question,
-                                'type': '',
+                                'source': 'Airzone FAQs',
+                                'title': faq_question,
                                 'description': clean_final_answer}
 
                     faq_list.append(faq_item)
@@ -214,15 +200,15 @@ def airzone_faq_scraper(session: Session) -> pd.DataFrame:
     return df
 
 
-def airzone_downloads_scraper(session):
+def airzone_downloads_scraper(db, session):
     logging.info("Starting the 'Airzone Control' website Downloads scraper...")
 
     groups_endpoint = 'https://api.airzonecloud.com/msmultimedia.pv1/groups'
     item_list = []
+    download_document_list = []
     # Create a dataframe to store the data
     df = pd.DataFrame(
-        columns=['primary_hash_id', 'mod_hash_id', 'uploaded_date', 'support_source', 'category', 'unit', 'subunit',
-                 'type', 'description'])
+        columns=['hash_id', 'uploaded_date', 'source', 'title', 'description'])
 
     try:
         response = session.get(groups_endpoint)
@@ -231,35 +217,31 @@ def airzone_downloads_scraper(session):
         groups = [{'id': group['id'], 'name': group['name']} for group in response_json['body']['media_groups']]
 
         for group in groups:
-            group_name = group['name']
             group_endpoint = f"https://api.airzonecloud.com/msmultimedia.pv1/groups/{group['id']}"
             response = session.get(group_endpoint)
             response_json = response.json()
             group_classes = response_json['body']['media_group']['classes']
             for group_class in group_classes:
-                class_name = group_class['name']
                 for item in group_class['media_resources']:
                     item_name = item['name']
-                    item_type = item['media_type_name']
                     item_url = item['url']
+                    # Save each item in a temporary dictionary
+                    temp_item_dict = {'title': item_name,
+                                      'url': item_url
+                                      }
+                    item_list.append(temp_item_dict)
 
-                    # Include primary_hash_id and mod_hash_id
-                    primary_hash_id_data = f"{group_name}{class_name}{item_name}{item_type}"
-                    primary_hash_id = calculate_hash(primary_hash_id_data)
+        # Check if any document already exists in the database and remove it from the list
+        collection_name = 'support'
+        field_name = 'url'
+        new_item_list = find_missing_documents_in_db(db, collection_name, field_name, item_list)
 
-                    mod_hash_id_data = item_url
-                    mod_hash_id = calculate_hash(mod_hash_id_data)
+        # Iterate over the list of items to download the PDFs and extract the text
 
-                    # Save the data into a dictionary (primary_hash_id, mod_hash_id, uploaded_date, category name,
-                    # unit name, subunit name and description)
-                    item_dict = {'primary_hash_id': primary_hash_id, 'mod_hash_id': mod_hash_id,
-                                 'uploaded_date': time.strftime('%Y-%m-%d %H:%M:%S'),
-                                 'support_source': 'Airzone Downloads',
-                                 'category': group_name, 'unit': class_name,
-                                 'subunit': item_name, 'type': item_type,
-                                 'description': item_url}
-
-                    item_list.append(item_dict)
+        for item in new_item_list:
+            # Extract the text from the PDF
+            chunk_dict_list = extract_text_from_pdf(item)
+            download_document_list.append(chunk_dict_list)
 
         logging.info("Inserting the 'Airzone Control Downloads' scraped data into a dataframe...")
 
@@ -276,22 +258,19 @@ def airzone_downloads_scraper(session):
     return df
 
 
-def support_scraper(session, db_connection):
+def support_scraper(session, db):
     logging.info("Starting the Support scraper...")
     try:
-
         support_df = airzone_support_scraper(session)
         faq_df = airzone_faq_scraper(session)
-        downloads_df = airzone_downloads_scraper(session)
+        # downloads_df = airzone_downloads_scraper(db, session)
 
         # Union the dataframes
-        final_df = pd.concat([support_df, faq_df, downloads_df], ignore_index=True)
+        final_df = pd.concat([support_df, faq_df], ignore_index=True)
 
-        query = "INSERT INTO support (primary_hash_id, mod_hash_id, uploaded_date, support_source, category, unit, " \
-                "subunit, type, description) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
-
+        collection = db['support']
         logging.info("Inserting the Support data into the database...")
-        insert_df_into_db(db_connection, final_df, query, 'support')
+        insert_df_into_db(collection, final_df)
 
     except Exception as e:
         logging.error(f"An error occurred in the support_scraper function: {str(e)}")

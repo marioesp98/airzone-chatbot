@@ -7,17 +7,7 @@ from bs4 import NavigableString
 import pandas as pd
 import time
 
-from src.utils.general_functions import calculate_hash, insert_df_into_db
-
-
-async def fetch(session, url):
-    """
-    Fetch the response for a given URL.
-    :param session: aiohttp session
-    :param url: URL to fetch
-    """
-    async with session.get(url) as response:
-        return await response.text()
+from src.utils.general_functions import calculate_hash, insert_df_into_db, fetch
 
 
 async def process_subunit(session, category_name, unit_name, subunit):
@@ -81,17 +71,6 @@ async def process_product(session, category_name, unit_name, subunit_name, produ
                                                                                                                  '')
     product_soup = BeautifulSoup(filtered_response, 'html.parser')
 
-    p_n = product_soup.find('span', itemprop='sku')
-    ean = product_soup.find('span', itemprop='gtin13')
-
-    # Add the P/N and EAN to the product if they were found
-    product_p_n = ''
-    if p_n is not None:
-        product_p_n = p_n.text.strip()
-    product_ean = ''
-    if ean is not None:
-        product_ean = ean.text.strip()
-
     raw_description = product_soup.find('div', itemprop='description')
     final_description = ''
     for tag in raw_description.contents:
@@ -109,19 +88,13 @@ async def process_product(session, category_name, unit_name, subunit_name, produ
                                                                                                " ").replace(
         "\n", " ").strip()
 
-    # Include primary_hash_id and mod_hash_id
-    primary_hash_id_data = f"{category_name}{unit_name}{subunit_name}{product_name}"
-    primary_hash_id = calculate_hash(primary_hash_id_data)
+    hash_id_data = f"{product_name}{clean_final_description}"
+    hash_id = calculate_hash(hash_id_data)
 
-    mod_hash_id_data = f"{clean_final_description}"
-    mod_hash_id = calculate_hash(mod_hash_id_data)
-    product_dict = {'primary_hash_id': primary_hash_id, 'mod_hash_id': mod_hash_id,
+    product_dict = {'hash_id': hash_id,
                     'uploaded_date': time.strftime('%Y-%m-%d %H:%M:%S'),
-                    'category': category_name,
-                    'unit': unit_name,
-                    'subunit': subunit_name, 'product': product_name,
-                    'p_n': product_p_n,
-                    'ean': product_ean,
+                    'source': 'Airzone Products',
+                    'title': product_name,
                     'description': clean_final_description}
 
     # Check also if there are FAQs for this product
@@ -131,7 +104,7 @@ async def process_product(session, category_name, unit_name, subunit_name, produ
 
     # Create a list of tuples with each question and its type (the regex removes the number and dot at the beginning
     # of the question)
-    question_tuples = [(re.sub(r'^\d+\.\s*', '', question), determine_question_type(question)) for question in
+    clean_questions = [re.sub(r'^\d+\.\s*', '', question) for question in
                        questions]
 
     faq_answers = product_soup.select('div[class="m-b-lg"]')
@@ -167,21 +140,17 @@ async def process_product(session, category_name, unit_name, subunit_name, produ
                                                                                                    " ").replace(
                 "\n", " ").strip()
 
-            # Include primary_hash_id and mod_hash_id
-            faq_primary_hash_id_data = f"{question_tuples[idx][0]}"
-            faq_primary_hash_id = calculate_hash(faq_primary_hash_id_data)
+            faq_hash_id_data = f"{clean_questions[idx]}{clean_final_answer}"
+            faq_hash_id = calculate_hash(faq_hash_id_data)
 
-            faq_mod_hash_id_data = f"{clean_final_answer}"
-            faq_mod_hash_id = calculate_hash(faq_mod_hash_id_data)
-
-            faq = {'primary_hash_id': faq_primary_hash_id, 'mod_hash_id': faq_mod_hash_id,
+            faq = {'hash_id': faq_hash_id,
                    'uploaded_date': time.strftime('%Y-%m-%d %H:%M:%S'),
-                   'support_source': 'Product FAQs',
-                   'category': 'Soporte Técnico',
-                   'unit': question_tuples[idx][1],
-                   'subunit': question_tuples[idx][0],
-                   'type': '', 'description': clean_final_answer}
+                   'source': 'Product FAQs',
+                   'title': clean_questions[idx],
+                   'description': clean_final_answer}
+
             faqs.append(faq)
+
         except IndexError:
             print(f"IndexError: {category_name}, {unit_name}, {subunit_name}, {product_name}")
 
@@ -190,7 +159,7 @@ async def process_product(session, category_name, unit_name, subunit_name, produ
     return product_dict
 
 
-async def airzone_products_scraper(db_connection):
+async def airzone_products_scraper(db):
     """
     Scrape the products from the Myzone website and their FAQs.
     :param db_connection: MySQL's connection object
@@ -203,8 +172,8 @@ async def airzone_products_scraper(db_connection):
             soup = BeautifulSoup(response, 'html.parser')
 
             categories = soup.find_all('h3', {'class': 'sidelines text-center'})
-            tasks = []
 
+            tasks = []
             for category in categories:
                 category_name = category.text.strip()
                 units = category.find_next_sibling('ul').select('li.categoria')
@@ -225,29 +194,20 @@ async def airzone_products_scraper(db_connection):
             # Extract all faqs elements from the product_list 'faqs' item in each product
             faqs = [faq for product in product_list for faq in product['faqs']]
 
-            product_df = pd.DataFrame(columns=['primary_hash_id', 'mod_hash_id', 'uploaded_date', 'category', 'unit',
-                                               'subunit', 'product', 'p_n', 'ean', 'description'])
+            product_df = pd.DataFrame(columns=['hash_id', 'uploaded_date', 'source', 'title', 'description'])
             for product in product_list:
-                product_df = product_df._append({'primary_hash_id': product['primary_hash_id'],
-                                                'mod_hash_id': product['mod_hash_id'],
-                                                'uploaded_date': product['uploaded_date'],
-                                                'category': product['category'],
-                                                'unit': product['unit'],
-                                                'subunit': product['subunit'],
-                                                'product': product['product'],
-                                                'p_n': product['p_n'],
-                                                'ean': product['ean'],
-                                                'description': product['description']}, ignore_index=True)
-
-            product_query = "INSERT INTO product (primary_hash_id, mod_hash_id, uploaded_date, category, unit, " \
-                            "subunit, product, p_n, ean, description) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-            insert_df_into_db(db_connection, product_df, product_query, 'product')
+                product_df = product_df._append({'hash_id': product['hash_id'],
+                                                 'uploaded_date': product['uploaded_date'],
+                                                 'source': product['source'],
+                                                 'title': product['title'],
+                                                 'description': product['description']}, ignore_index=True)
+            product_collection = db['product']
+            insert_df_into_db(product_collection, product_df)
 
             faq_df = pd.DataFrame(faqs)
 
-            faq_query = "INSERT INTO support (primary_hash_id, mod_hash_id, uploaded_date, support_source, category, " \
-                        "unit, subunit, type, description) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
-            insert_df_into_db(db_connection, faq_df, faq_query, 'support')
+            support_collection = db['support']
+            insert_df_into_db(support_collection, faq_df)
 
     except aiohttp.ClientError as e:
         logging.error(f"Aiohttp client error: {str(e)}")
