@@ -81,9 +81,9 @@ def insert_df_into_db(collection, df):
 
 def setup_logging():
     """
-    Set up the logging system based on the deployment option (On-premise or Cloud)
+    Set up the logging system based on the deployment option (On-premise, Lambda or EC2)
     """
-    if os.environ.get('DEPLOYMENT_OPTION') == 'CLOUD':
+    if os.environ.get('DEPLOYMENT_OPTION') == 'LAMBDA':
         logging.getLogger().setLevel(logging.INFO)
     else:
         with open('src/utils/logger_config.yaml', 'r') as config_file:
