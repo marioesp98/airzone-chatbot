@@ -3,17 +3,23 @@ import logging
 import os
 import re
 import time
+from typing import List
+
 import requests
 import yaml
 from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor
 from PyPDF2 import PdfReader
-from langchain.text_splitter import CharacterTextSplitter
+from bs4 import BeautifulSoup
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from pymongo import errors as pymongo_errors
 
-def remove_html_tags(text):
-    clean_text = re.sub(r'<[^>]*>', '', text)
-    return clean_text
+
+def remove_html_tags(text: str) -> str:
+    soup = BeautifulSoup(text, "html.parser")
+    cleaned_text = soup.get_text()
+    return cleaned_text
+
 
 async def fetch(session, url, output_format='text'):
     """
@@ -131,7 +137,7 @@ def extract_text_from_pdf(document):
         for page_data in pages_data:
             raw_text += page_data[1] + '\n'
 
-        chunks = split_text_into_chunks(raw_text)
+        chunks = split_text_into_chunks(raw_text, chunk_size=1000, chunk_overlap=200)
 
         chunk_dict_list = []
         for i, text in enumerate(chunks):
@@ -202,24 +208,27 @@ def extract_json_text(obj):
             text += extract_json_text(item)
 
     # Clean the final text removing double whitespaces and whitespaces before a dot
-    clean_text = text.replace("..", ".").replace(" .", ".").replace("   ", " ").replace("  ", " ").replace("\n", " ").strip()
+    clean_text = text.replace("..", ".").replace(" .", ".").replace("   ", " ").replace("  ", " ").replace("\n",
+                                                                                                           " ").strip()
 
     return clean_text
 
 
 # Create a function to split a text into chunks using CharacterTextSplitter
-def split_text_into_chunks(text):
+def split_text_into_chunks(text: str, chunk_size: int, chunk_overlap: int) -> List[str]:
     """
     Split a text into chunks using CharacterTextSplitter
     :param text: text to split
+    :param chunk_overlap: chunk overlap size
+    :param chunk_size: chunk size
     :return: list of chunks
     """
-    text_splitter = CharacterTextSplitter(
-        separator="\n",
+    clean_text = remove_html_tags(text)
+    text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000,
         chunk_overlap=200,
         length_function=len,
     )
-    chunks = text_splitter.split_text(text)
+    chunks = text_splitter.split_text(clean_text)
 
     return chunks

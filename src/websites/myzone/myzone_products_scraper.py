@@ -7,7 +7,7 @@ from bs4 import NavigableString
 import pandas as pd
 import time
 
-from src.utils.general_functions import calculate_hash, insert_df_into_db, fetch
+from src.utils.general_functions import calculate_hash, insert_df_into_db, fetch, split_text_into_chunks
 
 
 async def process_subunit(session, category_name, unit_name, subunit):
@@ -63,6 +63,7 @@ async def process_product(session, category_name, unit_name, subunit_name, produ
     :param product_endpoint: product endpoint
     :return: product dictionary with faqs list
     """
+    product_chunks_list = []
     faqs = []
     product_response = await fetch(session, f"https://myzone.airzone.es{product_endpoint}")
 
@@ -87,15 +88,22 @@ async def process_product(session, category_name, unit_name, subunit_name, produ
     clean_final_description = final_description.replace(" .", ".").replace("   ", " ").replace("  ",
                                                                                                " ").replace(
         "\n", " ").strip()
+    chunks = split_text_into_chunks(clean_final_description, chunk_size=1000, chunk_overlap=200)
 
-    hash_id_data = f"{product_name}{clean_final_description}"
-    hash_id = calculate_hash(hash_id_data)
+    for i, text in enumerate(chunks):
+        # Calculate the hash_id based on the title and the description
+        hash_id_data = f"{product_name}{text}"
+        hash_id = calculate_hash(hash_id_data)
 
-    product_dict = {'hash_id': hash_id,
-                    'uploaded_date': time.strftime('%Y-%m-%d %H:%M:%S'),
-                    'source': 'Airzone Products',
-                    'title': product_name,
-                    'description': clean_final_description}
+        chunk_dict = {
+            'hash_id': hash_id,
+            'upload_date': time.strftime('%Y-%m-%d %H:%M:%S'),
+            'source': 'Airzone Products',
+            'title': product_name,
+            'description': text
+        }
+        product_chunks_list.append(chunk_dict)
+
 
     # Check also if there are FAQs for this product
     questions = [q.get_text(strip=True) for q in
@@ -140,21 +148,26 @@ async def process_product(session, category_name, unit_name, subunit_name, produ
                                                                                                    " ").replace(
                 "\n", " ").strip()
 
-            faq_hash_id_data = f"{clean_questions[idx]}{clean_final_answer}"
-            faq_hash_id = calculate_hash(faq_hash_id_data)
+            chunks = split_text_into_chunks(clean_final_answer, chunk_size=1000, chunk_overlap=200)
 
-            faq = {'hash_id': faq_hash_id,
-                   'uploaded_date': time.strftime('%Y-%m-%d %H:%M:%S'),
-                   'source': 'Product FAQs',
-                   'title': clean_questions[idx],
-                   'description': clean_final_answer}
+            for i, text in enumerate(chunks):
+                # Calculate the hash_id based on the title and the description
+                hash_id_data = f"{clean_questions[idx]}{text}"
+                hash_id = calculate_hash(hash_id_data)
 
-            faqs.append(faq)
+                faq_chunk = {
+                    'hash_id': hash_id,
+                    'upload_date': time.strftime('%Y-%m-%d %H:%M:%S'),
+                    'source': 'Product FAQs',
+                    'title': clean_questions[idx],
+                    'description': text
+                }
+                faqs.append(faq_chunk)
 
         except IndexError:
             print(f"IndexError: {category_name}, {unit_name}, {subunit_name}, {product_name}")
 
-    product_dict['faqs'] = faqs
+    product_dict = {'products': product_chunks_list, 'faqs': faqs}
 
     return product_dict
 
@@ -190,22 +203,15 @@ async def airzone_products_scraper(db):
             # Wait for all tasks to finish
             result = await asyncio.gather(*tasks)
 
-            product_list = [product for sublist in result for product in sublist]
+            product_list = [product for sublist in result for chunk_list in sublist for product in chunk_list['products']]
             # Extract all faqs elements from the product_list 'faqs' item in each product
-            faqs = [faq for product in product_list for faq in product['faqs']]
+            faqs = [faq for sublist in result for chunk_list in sublist for faq in chunk_list['faqs']]
 
-            product_df = pd.DataFrame(columns=['hash_id', 'uploaded_date', 'source', 'title', 'description'])
-            for product in product_list:
-                product_df = product_df._append({'hash_id': product['hash_id'],
-                                                 'uploaded_date': product['uploaded_date'],
-                                                 'source': product['source'],
-                                                 'title': product['title'],
-                                                 'description': product['description']}, ignore_index=True)
+            product_df = pd.DataFrame(product_list)
             product_collection = db['product']
             insert_df_into_db(product_collection, product_df)
 
             faq_df = pd.DataFrame(faqs)
-
             support_collection = db['support']
             insert_df_into_db(support_collection, faq_df)
 

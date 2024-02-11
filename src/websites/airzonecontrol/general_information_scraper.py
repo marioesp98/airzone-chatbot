@@ -21,7 +21,7 @@ def general_information_scraper(session, db):
         for key, value in response_json["body"].items():
             text = extract_json_text(value)
 
-            chunks = split_text_into_chunks(text)
+            chunks = split_text_into_chunks(text, chunk_size=500, chunk_overlap=100)
 
             for i, text in enumerate(chunks):
                 hash_id_data = f"{key}{text}"
@@ -65,11 +65,10 @@ def general_information_scraper(session, db):
 
                 if section_name is not None:
                     clean_description = re.sub(r'\s+', ' ', description).strip()
-                    clean_description = remove_html_tags(clean_description)
                     footer_list.append((endpoint[0], clean_description))
 
         for item in footer_list:
-            chunks = split_text_into_chunks(item[1])
+            chunks = split_text_into_chunks(item[1], chunk_size=1000, chunk_overlap=200)
 
             for i, text in enumerate(chunks):
                 hash_id_data = f"{key}{text}"

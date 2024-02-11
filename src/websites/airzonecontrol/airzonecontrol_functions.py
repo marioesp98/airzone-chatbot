@@ -4,7 +4,7 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 
-from src.utils.general_functions import insert_df_into_db, calculate_hash
+from src.utils.general_functions import insert_df_into_db, calculate_hash, split_text_into_chunks
 
 
 def academia_scraper(session, db_connection):
@@ -37,17 +37,21 @@ def academia_scraper(session, db_connection):
                     " ").replace(
                     "\n", " ").strip()
 
-                # Include primary_hash_id and mod_hash_id
-                hash_id_data = f"{course_title}{course_clean_description}"
-                hash_id = calculate_hash(hash_id_data)
+                chunks = split_text_into_chunks(course_clean_description, chunk_size=1000, chunk_overlap=200)
 
-                # Save the data into a dictionary (id, profile, mode, title, description)
-                course_dict = {'hash_id': hash_id,
-                               'uploaded_date': time.strftime('%Y-%m-%d %H:%M:%S'),
-                               'source': 'Academia',
-                               'title': course_title,
-                               'description': course_clean_description}
-                course_list.append(course_dict)
+                for i, text in enumerate(chunks):
+                    # Calculate the hash_id based on the title and the description
+                    hash_id_data = f"{course_title}{text}"
+                    hash_id = calculate_hash(hash_id_data)
+
+                    chunk_dict = {
+                        'hash_id': hash_id,
+                        'upload_date': time.strftime('%Y-%m-%d %H:%M:%S'),
+                        'source': 'Academia',
+                        'title': course_title,
+                        'description': text
+                    }
+                    course_list.append(chunk_dict)
 
             logging.info("Inserting the 'Academia' scraped data into a dataframe...")
             df = pd.DataFrame(course_list)

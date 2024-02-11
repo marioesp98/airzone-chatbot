@@ -6,7 +6,7 @@ import warnings
 from bs4 import BeautifulSoup, NavigableString
 from requests import Session
 from src.utils.general_functions import calculate_hash, insert_df_into_db, extract_text_from_pdf, \
-    find_missing_documents_in_db
+    find_missing_documents_in_db, split_text_into_chunks
 from bs4 import MarkupResemblesLocatorWarning
 
 # Disable the warning
@@ -84,18 +84,21 @@ def airzone_support_scraper(session: Session) -> pd.DataFrame:
                                                                                                                    " ").replace(
                             "\n", " ").strip()
 
-                        # Calculate the hash_id based on the title and the description
-                        hash_id_data = f"{title}{clean_description}"
-                        hash_id = calculate_hash(hash_id_data)
+                        chunks = split_text_into_chunks(clean_final_description, chunk_size=1000, chunk_overlap=200)
 
-                        # Save the data into a dictionary (category name, unit name, subunit name and description)
-                        support_document = {'hash_id': hash_id,
-                                            'uploaded_date': time.strftime('%Y-%m-%d %H:%M:%S'),
-                                            'source': 'Airzone Support',
-                                            'title': title,
-                                            'description': clean_final_description}
+                        for i, text in enumerate(chunks):
+                            # Calculate the hash_id based on the title and the description
+                            hash_id_data = f"{title}{text}"
+                            hash_id = calculate_hash(hash_id_data)
 
-                        support_document_list.append(support_document)
+                            chunk_dict = {
+                                'hash_id': hash_id,
+                                'upload_date': time.strftime('%Y-%m-%d %H:%M:%S'),
+                                'source': 'Airzone Support',
+                                'title': title,
+                                'description': text
+                            }
+                            support_document_list.append(chunk_dict)
 
             logging.info("Inserting the 'Airzone Support' scraped data into a dataframe...")
 
@@ -173,17 +176,21 @@ def airzone_faq_scraper(session: Session) -> pd.DataFrame:
                     clean_final_answer = final_answer.replace(" .", ".").replace("   ", " ").replace("  ", " ").replace(
                         "\n", " ").replace("( ", "(").strip()
 
-                    hash_id_data = f"{faq_question}{clean_final_answer}"
-                    hash_id = calculate_hash(hash_id_data)
+                    chunks = split_text_into_chunks(clean_final_answer, chunk_size=1000, chunk_overlap=200)
 
-                    # Save the data into a dictionary (hash_id, uploaded_date, title and description)
-                    faq_item = {'hash_id': hash_id,
-                                'uploaded_date': time.strftime('%Y-%m-%d %H:%M:%S'),
-                                'source': 'Airzone FAQs',
-                                'title': faq_question,
-                                'description': clean_final_answer}
+                    for i, text in enumerate(chunks):
+                        # Calculate the hash_id based on the title and the description
+                        hash_id_data = f"{faq_question}{text}"
+                        hash_id = calculate_hash(hash_id_data)
 
-                    faq_list.append(faq_item)
+                        chunk_dict = {
+                            'hash_id': hash_id,
+                            'upload_date': time.strftime('%Y-%m-%d %H:%M:%S'),
+                            'source': 'Airzone FAQs',
+                            'title': faq_question,
+                            'description': text
+                        }
+                        faq_list.append(chunk_dict)
 
         logging.info("Inserting the 'Airzone Control' FAQs scraped data into a dataframe...")
 
