@@ -108,7 +108,6 @@ def extract_text_from_pdf(pdf) -> tuple:
     title = pdf[1]
     url = pdf[2]
 
-    logging.info(f"Extracting text from PDF: {url}")
     # Download the PDF content
     response = requests.get(url)
 
