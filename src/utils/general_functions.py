@@ -107,28 +107,36 @@ def extract_text_from_pdf(pdf) -> tuple:
     """
     title = pdf[1]
     url = pdf[2]
+    try:
+        logging.info(f"Extracting text from PDF: {url}")
+        # Download the PDF content
+        response = requests.get(url)
+        response.raise_for_status()  # Raise an exception for HTTP errors
 
-    logging.info(f"Extracting text from PDF: {url}")
-    # Download the PDF content
-    response = requests.get(url)
+        # Creation of a temporary file to store the pdf
+        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+            temp_file.write(response.content)
+            temp_file_path = temp_file.name
 
-    # Creation of a temporary file to store the pdf
-    with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-        temp_file.write(response.content)
-        temp_file_path = temp_file.name
+        with fitz.open(temp_file_path) as pdf_document:
+            # Initialize an empty string to store the extracted text
+            text = ""
 
-    with fitz.open(temp_file_path) as pdf_document:
-        # Initialize an empty string to store the extracted text
-        text = ""
+            # Iterate through all the pages and extract text
+            for page_number in range(len(pdf_document)):
+                page = pdf_document.load_page(page_number)
+                text += page.get_text()
 
-        # Iterate through all the pages and extract text
-        for page_number in range(len(pdf_document)):
-            page = pdf_document.load_page(page_number)
-            text += page.get_text()
 
-    os.remove(temp_file_path)
+        return title, url, text
 
-    return title, url, text
+    except Exception as e:
+        logging.error(f"An error occurred while extracting text from PDF {url}: {e}")
+        return title, url, ""  # Return empty text in case of error
+    finally:
+        # Remove temporary file
+        if os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
 
 
 # Function to extract text from multiple PDFs in parallel
