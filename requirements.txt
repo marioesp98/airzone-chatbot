@@ -26,6 +26,8 @@ pandas==2.2.0
 pydantic==2.6.0
 pydantic_core==2.16.1
 pymongo==4.6.1
+PyMuPDF==1.23.22
+PyMuPDFb==1.23.22
 PyPDF2==3.0.1
 python-dateutil==2.8.2
 pytz==2024.1

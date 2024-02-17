@@ -5,9 +5,9 @@ import requests
 import warnings
 from bs4 import BeautifulSoup, NavigableString
 from requests import Session
-from src.utils.general_functions import calculate_hash, insert_df_into_db, extract_text_from_pdf, \
-    find_missing_documents_in_db, split_text_into_chunks
+from src.utils.general_functions import calculate_hash, insert_df_into_db, split_text_into_chunks, extract_text_from_pdfs_parallel
 from bs4 import MarkupResemblesLocatorWarning
+
 
 # Disable the warning
 warnings.simplefilter("ignore", MarkupResemblesLocatorWarning)
@@ -207,16 +207,11 @@ def airzone_faq_scraper(session: Session) -> pd.DataFrame:
     return df
 
 
-def airzone_downloads_scraper(db, session):
+def airzone_downloads_scraper(session):
     logging.info("Starting the 'Airzone Control' website Downloads scraper...")
 
     groups_endpoint = 'https://api.airzonecloud.com/msmultimedia.pv1/groups'
     item_list = []
-    download_document_list = []
-    # Create a dataframe to store the data
-    df = pd.DataFrame(
-        columns=['hash_id', 'uploaded_date', 'source', 'title', 'description'])
-
     try:
         response = session.get(groups_endpoint)
         response_json = response.json()
@@ -230,30 +225,64 @@ def airzone_downloads_scraper(db, session):
             group_classes = response_json['body']['media_group']['classes']
             for group_class in group_classes:
                 for item in group_class['media_resources']:
-                    item_name = item['name']
-                    item_url = item['url']
-                    # Save each item in a temporary dictionary
-                    temp_item_dict = {'title': item_name,
-                                      'url': item_url
-                                      }
-                    item_list.append(temp_item_dict)
+                    if 'pdf' in item['url']:
+                        item_name = item['name']
+                        item_url = item['url']
+                        # Save each item in a temporary dictionary
+                        temp_item_dict = {'title': item_name,
+                                          'url': item_url
+                                          }
+                        item_list.append(temp_item_dict)
 
-        # Check if any document already exists in the database and remove it from the list
-        collection_name = 'support'
-        field_name = 'url'
-        new_item_list = find_missing_documents_in_db(db, collection_name, field_name, item_list)
+        # Create a dataframe to store the PDF names and URLs
+        pdf_df = pd.DataFrame(item_list)
 
-        # Iterate over the list of items to download the PDFs and extract the text
+        # Remove duplicates from the dataframe by URL
+        unique_pdf_df = pdf_df.drop_duplicates(subset='url')
 
-        for item in new_item_list:
-            # Extract the text from the PDF
-            chunk_dict_list = extract_text_from_pdf(item)
-            download_document_list.append(chunk_dict_list)
+        # Extract the text from the PDFs in parallel
+        extracted_pdfs_text = extract_text_from_pdfs_parallel(unique_pdf_df)
+
+        # Split each text into a list of paragraphs, separated by the newline character
+        split_texts = [(text[0], text[1], text[2].split('\n')) for text in extracted_pdfs_text]
+
+        # Remove any paragraph that is less than 25 characters, enough to filter out any data that is not useful
+        for idx, text in enumerate(split_texts):
+            split_texts[idx] = (text[0], text[1], [paragraph for paragraph in text[2] if len(paragraph) > 25])
+
+        # Remove any empty lists
+        split_texts = [text for text in split_texts if text]
+
+        # Remake the full text by joining the paragraphs texts
+        full_texts = [(text[0], text[1], ' '.join(text[2])) for text in split_texts]
+
+        support_pdf_chunk_list = []
+        for full_text in full_texts:
+            chunks = split_text_into_chunks(full_text[2], chunk_size=500, chunk_overlap=100)
+
+            for i, text in enumerate(chunks):
+                pdf_title = full_text[0]
+                pdf_url = full_text[1]
+                pdf_text = text
+                # Calculate the hash_id based on the title and the description
+                hash_id_data = f"{pdf_title}{pdf_text}"
+                hash_id = calculate_hash(hash_id_data)
+
+                chunk_dict = {
+                    'hash_id': hash_id,
+                    'upload_date': time.strftime('%Y-%m-%d %H:%M:%S'),
+                    'source': 'Airzone Downloads',
+                    'title': pdf_title,
+                    'url': pdf_url,
+                    'description': pdf_text
+                }
+                support_pdf_chunk_list.append(chunk_dict)
 
         logging.info("Inserting the 'Airzone Control Downloads' scraped data into a dataframe...")
 
-        # Store the categories, units, subunits and descriptions in the dataframe
-        df = pd.DataFrame(item_list)
+        pdf_df = pd.DataFrame(support_pdf_chunk_list)
+
+        return pdf_df
 
     except requests.exceptions.Timeout as e:
         logging.error(f"Request timed out: {str(e)}")
@@ -262,18 +291,15 @@ def airzone_downloads_scraper(db, session):
     except Exception as e:
         logging.error(f"An error occurred in the airzone_downloads_scraper function: {str(e)}")
 
-    return df
-
 
 def support_scraper(session, db):
     logging.info("Starting the Support scraper...")
     try:
         support_df = airzone_support_scraper(session)
         faq_df = airzone_faq_scraper(session)
-        # downloads_df = airzone_downloads_scraper(db, session)
+        downloads_df = airzone_downloads_scraper(session)
 
-        # Union the dataframes
-        final_df = pd.concat([support_df, faq_df], ignore_index=True)
+        final_df = pd.concat([support_df, faq_df, downloads_df], ignore_index=True)
 
         collection = db['support']
         logging.info("Inserting the Support data into the database...")

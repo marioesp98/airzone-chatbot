@@ -1,15 +1,13 @@
+import concurrent
 import hashlib
 import logging
 import os
-import re
-import time
+import tempfile
 from typing import List
-
+import fitz
 import requests
 import yaml
-from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor
-from PyPDF2 import PdfReader
 from bs4 import BeautifulSoup
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from pymongo import errors as pymongo_errors
@@ -21,7 +19,7 @@ def remove_html_tags(text: str) -> str:
     return cleaned_text
 
 
-async def fetch(session, url, output_format='text'):
+async def fetch(session, url, output_format='text') -> str:
     """
     Async function to fetch the response for a given URL.
     :param session: aiohttp session
@@ -37,7 +35,7 @@ async def fetch(session, url, output_format='text'):
             raise ValueError("Invalid output format")
 
 
-def calculate_hash(concatenated_string):
+def calculate_hash(concatenated_string) -> str:
     """
     Calculate the SHA256 hash for a given string.
     :param concatenated_string: string to calculate the hash
@@ -47,7 +45,7 @@ def calculate_hash(concatenated_string):
     return sha256_hash
 
 
-def insert_df_into_db(collection, df):
+def insert_df_into_db(collection, df) -> None:
     """
     Insert a DataFrame into a given collection in the MongoDB database. Only the documents that do not exist in the
     collection will be inserted, and those that already exist and are not in the dataframe will be removed
@@ -77,7 +75,8 @@ def insert_df_into_db(collection, df):
                 collection.delete_one({'_id': row['_id']})
 
         logging.info(
-            f"Process finished successfully. {len(rows_to_insert)} new rows were inserted into the '{collection.name}' collection")
+            f"Process finished successfully. {len(list(rows_to_remove))} rows were removed and {len(rows_to_insert)} new "
+            f"rows were inserted into the '{collection.name}' collection")
 
     except pymongo_errors.PyMongoError as e:
         logging.info(f"Failed to insert documents into '{collection.name}' collection: {e}")
@@ -85,7 +84,7 @@ def insert_df_into_db(collection, df):
         raise e
 
 
-def setup_logging():
+def setup_logging() -> None:
     """
     Set up the logging system based on the deployment option (On-premise, Lambda or EC2)
     """
@@ -100,71 +99,60 @@ def setup_logging():
         logger = logging.getLogger(__name__)
 
 
-def extract_text_from_pdf(document):
-    document_title = document['title']
-    document_url = document['url']
-    try:
-        # Extract the document title from the URL
+def extract_text_from_pdf(pdf) -> tuple:
+    """
+    Extract text from a PDF given its URL.
+    :param pdf: tuple with the title and the URL of the PDF
+    :return: tuple with the title and the extracted text
+    """
+    title = pdf[1]
+    url = pdf[2]
 
-        # Download the PDF file from the URL
-        response = requests.get(document_url)
-        response.raise_for_status()  # Check for any errors during download
+    logging.info(f"Extracting text from PDF: {url}")
+    # Download the PDF content
+    response = requests.get(url)
 
-        # Read the content of the PDF into a BytesIO object
-        pdf_bytes = BytesIO(response.content)
+    # Creation of a temporary file to store the pdf
+    with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+        temp_file.write(response.content)
+        temp_file_path = temp_file.name
 
-        # Create a PdfReader object using the downloaded PDF content
-        reader = PdfReader(pdf_bytes)
+    with fitz.open(temp_file_path) as pdf_document:
+        # Initialize an empty string to store the extracted text
+        text = ""
 
-        print(f"Reading file: {document_title}")
-        # read data from the file and put them into a variable called raw_text
-        raw_text = ''
-        pages_data = []
-        with ThreadPoolExecutor() as executor:
-            for i, page in enumerate(reader.pages):
-                print(f"Reading page {i + 1}...")
-                text = executor.submit(page.extract_text)
-                if text.result():
-                    # Create a tuple with the page number and the text extracted from the page
-                    page_data = (i + 1, text.result())
-                    # Append the tuple to the list
-                    pages_data.append(page_data)
+        # Iterate through all the pages and extract text
+        for page_number in range(len(pdf_document)):
+            page = pdf_document.load_page(page_number)
+            text += page.get_text()
 
-        # Sort the list of tuples by page number
-        pages_data.sort(key=lambda tup: tup[0])
+    os.remove(temp_file_path)
 
-        # Extract the text from the sorted list of tuples and concatenate it into a single string
-        for page_data in pages_data:
-            raw_text += page_data[1] + '\n'
-
-        chunks = split_text_into_chunks(raw_text, chunk_size=1000, chunk_overlap=200)
-
-        chunk_dict_list = []
-        for i, text in enumerate(chunks):
-            chunk_description = text.replace("\n", " ")
-            # Include primary_hash_id and mod_hash_id
-            hash_id_data = f"{document_title}{chunk_description}"
-            hash_id = calculate_hash(hash_id_data)
-
-            chunk_dict = {
-                'hash_id': hash_id,
-                'upload_date': time.strftime('%Y-%m-%d %H:%M:%S'),
-                'source': 'Airzone Downloads',
-                'title': document_title,
-                'url': document_url,
-                'index': i + 1,
-                'description': chunk_description
-            }
-            chunk_dict_list.append(chunk_dict)
-
-        return chunk_dict_list
-
-    except Exception as e:
-        logging.error(f"Failed to extract content from '{document_url}': {e}")
-        return []
+    return title, url, text
 
 
-def find_missing_documents_in_db(db, collection_name, field_name, document_list):
+# Function to extract text from multiple PDFs in parallel
+def extract_text_from_pdfs_parallel(pdf_df) -> List[str]:
+    """
+    Extract text from multiple PDFs in parallel.
+    :param pdf_df: dataframe with the title and the URL of the PDFs
+    :return: list with the extracted text of each PDF
+    """
+    extracted_texts = []
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        # Submit tasks for each PDF URL
+        futures = [executor.submit(extract_text_from_pdf, pdf) for pdf in pdf_df.itertuples()]
+        # Get results as they become available
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                extracted_texts.append(future.result())
+            except Exception as e:
+                print(f"An error occurred: {e}")
+
+    return extracted_texts
+
+
+def find_missing_documents_in_db(db, collection_name, field_name, document_list) -> List[dict]:
     """
     Find the documents that are not in the database given a field to search by and a list of documents, and return them
     in a list
@@ -179,13 +167,13 @@ def find_missing_documents_in_db(db, collection_name, field_name, document_list)
         collection = db[collection_name]
 
         # Query MongoDB and remove from the list the items that already exist in the database
-        existing_urls = collection.find({field_name: {'$in': [d[field_name] for d in document_list]}})
+        existing_documents = collection.find({field_name: {'$in': [d[field_name] for d in document_list]}})
 
-        existing_urls_list = [doc[field_name] for doc in existing_urls]
+        existing_document_fields = [doc[field_name] for doc in existing_documents]
 
-        missing_items = [d for d in document_list if d[field_name] not in existing_urls_list]
+        missing_documents = [d for d in document_list if d[field_name] not in existing_document_fields]
 
-        return missing_items
+        return missing_documents
 
     except Exception as e:
         print(f"An error occurred: {e}")
@@ -193,7 +181,7 @@ def find_missing_documents_in_db(db, collection_name, field_name, document_list)
 
 
 # Recursive function to extract text from nested dictionaries
-def extract_json_text(obj):
+def extract_json_text(obj) -> str:
     text = ""
     if isinstance(obj, dict):
         for key, value in obj.items():
