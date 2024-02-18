@@ -19,10 +19,6 @@ def airzone_support_scraper(session: Session) -> pd.DataFrame:
     categories = []
     target_iso = 'MU_AZCLOUD'
 
-    # Create a dataframe to store the data
-    df = pd.DataFrame(
-        columns=['hash_id', 'uploaded_date', 'source', 'title', 'description'])
-
     try:
         logging.info("Starting the 'Airzone Support' website scraper...")
         response = session.get(support_endpoint)

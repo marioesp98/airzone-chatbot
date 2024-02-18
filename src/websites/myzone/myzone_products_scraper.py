@@ -104,7 +104,6 @@ async def process_product(session, category_name, unit_name, subunit_name, produ
         }
         product_chunks_list.append(chunk_dict)
 
-
     # Check also if there are FAQs for this product
     questions = [q.get_text(strip=True) for q in
                  product_soup.select('div.row > div.col-sm-12.inner-top-xs > a.make-menos > h3.faq') if
@@ -203,7 +202,8 @@ async def airzone_products_scraper(db):
             # Wait for all tasks to finish
             result = await asyncio.gather(*tasks)
 
-            product_list = [product for sublist in result for chunk_list in sublist for product in chunk_list['products']]
+            product_list = [product for sublist in result for chunk_list in sublist for product in
+                            chunk_list['products']]
             # Extract all faqs elements from the product_list 'faqs' item in each product
             faqs = [faq for sublist in result for chunk_list in sublist for faq in chunk_list['faqs']]
 

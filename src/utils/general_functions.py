@@ -14,6 +14,11 @@ from pymongo import errors as pymongo_errors
 
 
 def remove_html_tags(text: str) -> str:
+    """
+    Remove HTML tags from a given text.
+    :param text: text to clean
+    :return: cleaned text
+    """
     soup = BeautifulSoup(text, "html.parser")
     cleaned_text = soup.get_text()
     return cleaned_text
@@ -111,7 +116,7 @@ def extract_text_from_pdf(pdf) -> tuple:
         logging.info(f"Extracting text from PDF: {url}")
         # Download the PDF content
         response = requests.get(url)
-        response.raise_for_status()  # Raise an exception for HTTP errors
+        response.raise_for_status()
 
         # Creation of a temporary file to store the pdf
         with tempfile.NamedTemporaryFile(delete=False) as temp_file:
@@ -119,30 +124,26 @@ def extract_text_from_pdf(pdf) -> tuple:
             temp_file_path = temp_file.name
 
         with fitz.open(temp_file_path) as pdf_document:
-            # Initialize an empty string to store the extracted text
             text = ""
-
             # Iterate through all the pages and extract text
             for page_number in range(len(pdf_document)):
                 page = pdf_document.load_page(page_number)
                 text += page.get_text()
 
-
         return title, url, text
 
     except Exception as e:
         logging.error(f"An error occurred while extracting text from PDF {url}: {e}")
-        return title, url, ""  # Return empty text in case of error
+        return title, url, ""
     finally:
         # Remove temporary file
         if os.path.exists(temp_file_path):
             os.remove(temp_file_path)
 
 
-# Function to extract text from multiple PDFs in parallel
 def extract_text_from_pdfs_parallel(pdf_df) -> List[str]:
     """
-    Extract text from multiple PDFs in parallel.
+    Extract text from multiple PDFs in parallel using ThreadPoolExecutor.
     :param pdf_df: dataframe with the title and the URL of the PDFs
     :return: list with the extracted text of each PDF
     """
@@ -190,6 +191,11 @@ def find_missing_documents_in_db(db, collection_name, field_name, document_list)
 
 # Recursive function to extract text from nested dictionaries
 def extract_json_text(obj) -> str:
+    """
+    Extract text from a nested JSON object.
+    :param obj: JSON object
+    :return: extracted text
+    """
     text = ""
     if isinstance(obj, dict):
         for key, value in obj.items():

@@ -1,15 +1,12 @@
 import json
-import logging
 import sys
 import traceback
-
 from main_scraper import airzone_main_scraper
 
 
 def lambda_handler(event, context):
     try:
         # Run the main scraper
-        logging.info("This is a test")
         airzone_main_scraper()
         return {
             'statusCode': 200,

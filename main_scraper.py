@@ -1,6 +1,5 @@
 import asyncio
 import os
-import time
 
 import requests
 import logging
@@ -39,6 +38,7 @@ def airzone_main_scraper():
         # Set up the logging configuration based on the deployment option (On-premise or Cloud)
         setup_logging()
         logging.info("Setting up the connection to the database...")
+
         # Create a MongoDB client
         if deployment_option == 'ON_PREMISE':
             client = MongoClient(host=db_host, port=int(db_port), username=db_user, password=db_password)

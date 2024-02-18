@@ -1,3 +1,5 @@
+# Dockerfile for building the image used in the Amazon EC2 instance
+
 FROM python:3.11
 
 WORKDIR /app

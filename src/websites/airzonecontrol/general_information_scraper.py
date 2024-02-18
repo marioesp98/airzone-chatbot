@@ -5,8 +5,7 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 
-from src.utils.general_functions import calculate_hash, insert_df_into_db, extract_json_text, split_text_into_chunks, \
-    remove_html_tags
+from src.utils.general_functions import calculate_hash, insert_df_into_db, extract_json_text, split_text_into_chunks
 
 
 def general_information_scraper(session, db):
@@ -35,7 +34,6 @@ def general_information_scraper(session, db):
                     'description': text
                 }
                 general_information_list.append(chunk_dict)
-
 
         # Next, get the footer sections from Myzone website
         endpoints = (('Política de privacidad', 'https://myzone.airzone.es/politica-privacidad'),
